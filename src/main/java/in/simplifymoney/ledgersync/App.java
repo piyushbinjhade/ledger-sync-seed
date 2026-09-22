@@ -5,6 +5,9 @@ import in.simplifymoney.ledgersync.json.Json;
 import in.simplifymoney.ledgersync.parse.Parsers;
 import in.simplifymoney.ledgersync.report.Reports;
 import in.simplifymoney.ledgersync.store.SqlLedgerStore;
+import in.simplifymoney.ledgersync.store.Backfill;
+import in.simplifymoney.ledgersync.store.ConsistencyChecker;
+import in.simplifymoney.ledgersync.store.MongoDocumentStore;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -22,7 +25,7 @@ public final class App {
 
     public static void main(String[] args) throws Exception {
         if (args.length == 0) {
-            System.err.println("usage: migrate | ingest <corpus.jsonl> | report <out-dir>");
+            System.err.println("usage: migrate | ingest <corpus.jsonl> | report <out-dir> | backfill | consistency | reset-documents");
             System.exit(2);
         }
         Files.createDirectories(DB.getParent());
@@ -54,9 +57,34 @@ public final class App {
                             Json.writePretty(Reports.ledgerDocument(ledger)));
                     Files.writeString(out.resolve("summary.json"),
                             Json.writePretty(Reports.summary(ledger)));
+                    Path totals = Path.of("fixtures", "corpus-a-totals.json");
                     Files.writeString(out.resolve("reconciliation.json"),
-                            Json.writePretty(Reports.reconciliation(ledger)));
+                            Json.writePretty(Files.exists(totals)
+                                    ? Reports.reconciliation(ledger, Json.parseObject(Files.readString(totals)))
+                                    : Reports.reconciliation(ledger)));
                     System.out.println("wrote 3 files to " + out);
+                }
+            }
+            case "backfill" -> {
+                try (SqlLedgerStore sql = new SqlLedgerStore(DB);
+                     MongoDocumentStore documents = new MongoDocumentStore()) {
+                    sql.migrate(MIGRATIONS);
+                    System.out.println(new Backfill(sql, documents).run());
+                }
+            }
+            case "consistency" -> {
+                try (SqlLedgerStore sql = new SqlLedgerStore(DB);
+                     MongoDocumentStore documents = new MongoDocumentStore()) {
+                    sql.migrate(MIGRATIONS);
+                    var divergences = new ConsistencyChecker(sql, documents).check();
+                    divergences.forEach(System.out::println);
+                    System.out.println("divergences: " + divergences.size());
+                }
+            }
+            case "reset-documents" -> {
+                try (MongoDocumentStore documents = new MongoDocumentStore()) {
+                    documents.reset();
+                    System.out.println("MongoDB transaction collection reset");
                 }
             }
             default -> {

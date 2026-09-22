@@ -33,4 +33,6 @@ public interface DocumentStore {
     Optional<NormalizedTxn> byMessageId(String messageId);
 
     void save(NormalizedTxn txn);
+
+    List<NormalizedTxn> all();
 }

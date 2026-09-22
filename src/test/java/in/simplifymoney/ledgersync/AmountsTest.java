@@ -35,6 +35,18 @@ class AmountsTest {
     }
 
     @Test
+    void readsWholeRupeeAmountBeforeAvailableBalance() {
+        assertEquals(new BigDecimal("5.00"),
+                Amounts.first("Rs.5 debited from a/c **4821. Avl Bal: Rs.92,213.10"));
+    }
+
+    @Test
+    void readsWholeAmountWithThousandsSeparatorsBeforeAvailableBalance() {
+        assertEquals(new BigDecimal("8000.00"),
+                Amounts.first("Rs 8,000 debited from a/c **4821. Avl Bal: Rs.80,071.04"));
+    }
+
+    @Test
     void readsTheStatedBalance() {
         assertEquals(new BigDecimal("89032.61"),
                 Amounts.statedBalance("Rs.2,499.50 debited from a/c **4821 on "

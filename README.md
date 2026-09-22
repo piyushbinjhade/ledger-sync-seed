@@ -154,9 +154,7 @@ point, not a bug you have hit.
 
 ## The document store
 
-The ledger is moving off SQL onto a document store. **DynamoDB preferred,
-MongoDB fine** — your choice, and say why. It must run from your
-`docker compose up`.
+The ledger is moving off SQL onto MongoDB. It must run from `docker compose up`.
 
 `DocumentStore` declares the only three queries this service makes:
 
@@ -167,10 +165,8 @@ MongoDB fine** — your choice, and say why. It must run from your
 Design your documents so the engine serves these directly. We are not going to
 tell you what a document should look like — that decision is the exercise.
 
-For each of the three, **report how many items the engine examined versus how
-many it returned, at 100,000 transactions.** DynamoDB gives you `ScannedCount`
-and `Count`; MongoDB gives you `totalDocsExamined` and `nReturned`. Put the six
-numbers in your README.
+For each of the three, report MongoDB's `totalDocsExamined` versus `nReturned`
+at 100,000 transactions.
 
 Then:
 
@@ -195,3 +191,106 @@ Then:
   could have asked is a worse signal than asking.
 
 `talent.acquisition@simplifymoney.in`
+
+## Completed implementation
+
+### Setup and commands
+
+Requirements are Java 21 and Gradle 9.7.1. From the repository root:
+
+```text
+gradle test --rerun-tasks
+gradle selfCheck
+docker compose up -d
+gradle run --args="migrate"
+gradle run --args="ingest fixtures/corpus-a.jsonl"
+gradle run --args="report report"
+gradle run --args="backfill"
+gradle run --args="consistency"
+gradle documentBenchmark
+```
+
+After MongoDB is running, enable the opt-in integration test in PowerShell:
+
+```powershell
+$env:MONGODB_TEST = "true"
+gradle test --rerun-tasks
+```
+
+`selfCheck` is the dependency-free corpus validation. It produces 257 normalized
+transactions: 146 for 4821 and 91 for 9075. The closing balances are 41126.34
+and 51210.63. Report output is written to `report/ledger.json`,
+`report/summary.json`, and `report/reconciliation.json`.
+
+### MongoDB document model and queries
+
+`docker compose up -d` starts MongoDB 8 on `localhost:27017` with the named
+volume `ledger-sync-mongodb`. The application reads `MONGODB_URI` and
+`MONGODB_DATABASE`, defaulting to `mongodb://localhost:27017` and `ledger_sync`.
+
+Each `transactions` document contains `accountLast4`, ISO `occurredAt`, BSON
+`occurredAtInstant`, `direction`, Decimal128 `amount`, `category`, `merchant`,
+and sorted `sourceMessageIds`. `_id` is a deterministic SHA-256 identity of
+account, timestamp, direction, amount, and merchant; it is not a random UUID.
+Upserts merge evidence IDs, so repeated backfills and overlapping evidence do
+not create duplicate documents.
+
+MongoDB indexes:
+
+1. `account_month_newest`: `{accountLast4: 1, occurredAtInstant: -1}` serves one account's monthly date-range query newest first.
+2. `source_message_ids`: `{sourceMessageIds: 1}` serves message ID lookup directly.
+3. Category totals use a `$match` on `accountLast4` followed by `$group` on category and Decimal128 sum.
+
+`gradle run --args="backfill"` reads SQL, canonicalizes legacy duplicates,
+and performs repeatable MongoDB upserts. `gradle run --args="consistency"`
+compares SQL and MongoDB full transaction fields and reports missing, extra, or
+specific changed fields. The `InMemoryDocumentStore` remains only as a fast
+unit-test double; production commands use `MongoDocumentStore`.
+
+### 100k measurement
+
+With MongoDB running, run `gradle documentBenchmark` to insert 100,000 rows and
+run all three queries with MongoDB execution statistics. The command prints the
+actual `totalDocsExamined` and `nReturned` values; results must be recorded from
+that run rather than copied from the in-memory unit-test benchmark.
+
+```text
+account-month examined=1000 returned=1000
+category-totals examined=1000 returned=1
+message-id examined=1 returned=1
+```
+
+These are live MongoDB `executionStats` from the 100,000-row benchmark run on
+23 Sep 2026. The category query returned one grouped category because the
+benchmark data contains only `SPEND`; the API fills absent categories with zero.
+
+### Decision log
+
+1. Kept Java/JDK JSON handling because the service already had a money-safe JSON implementation and no web framework is needed.
+2. Kept SQL/H2 as the source and backfill input because the assignment explicitly preserves it for historical data.
+3. Used MongoDB with the official synchronous Java driver because the assignment requires persistent documents and permits MongoDB.
+4. Used a canonical transaction key so repeated SQL rows do not become duplicate documents.
+5. Merged evidence IDs using a sorted set so ingestion and backfill are deterministic.
+6. Classified UPI debits at or below 100.00 as MICRO while excluding them from normal SPEND.
+7. Matched own-account opposite legs as TRANSFER only when account, amount, direction, merchant evidence, and timing support it.
+8. Kept card account 3310 as a represented account so it cannot affect bank-account balance calculations.
+9. Changed H2 `IDENTITY` to standard generated identity syntax because H2 2.2 rejects the legacy spelling.
+10. Added a MongoDB explain benchmark and kept the in-memory implementation only for offline unit tests.
+
+The corpus drove the implementation: it contains 522 messages, overlapping SMS
+and email evidence, alternate ICICI formats, card alerts, and one integer-only
+`Rs.5` incident message. The full pipeline now reconciles the supplied counts
+and balances without fixture-specific totals in the parser.
+
+### AI disclosure
+
+An early implementation suggestion treated every parsed message as a separate
+transaction and would have reported 323 rows. That was wrong because SMS and
+email are overlapping evidence. It was corrected by consolidating on transaction
+identity, merging sorted source IDs, and adding the full-corpus idempotency test.
+
+### Known limitations
+
+1. Live MongoDB integration tests and benchmark require Docker and `MONGODB_TEST=true`; they are skipped or unavailable when Docker is not installed.
+2. The benchmark collection is intentionally disposable; rerunning it against the same database should use a clean benchmark database or collection to avoid measuring old rows.
+3. The SQL migration intentionally seeds 15 legacy rows; CLI reports after `migrate` plus corpus ingest therefore include those historical rows. `selfCheck` is the clean corpus checkpoint.

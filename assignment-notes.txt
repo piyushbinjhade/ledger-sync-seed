@@ -1,0 +1,53 @@
+BASELINE — BEFORE CHANGES
+
+Environment:
+Java: 21.0.12
+Gradle: 9.7.1
+OS: Windows 11
+
+Command:
+gradle test
+
+Result:
+BUILD SUCCESSFUL
+Existing test suite is green.
+
+Command:
+gradle selfCheck
+
+Messages read: 522
+Transactions produced: 323
+Expected transactions: 257
+Messages skipped: 199
+
+SPEND: 1,786,009.22
+INCOME: 246,383.75
+MICRO: 0.00
+TRANSFER: 0.00
+
+Account 4821:
+Produced: 232
+Expected: 146
+Ledger balance: -1,213,003.85
+Bank balance: 41,126.34
+
+Account 9075:
+Produced: 57
+Expected: 91
+Ledger balance: -202,955.83
+Bank balance: 51,210.63
+
+Initial observation:
+The existing implementation passes its tests but does not correctly
+process corpus-a. Transaction count, account distribution, category
+classification, and balances do not reconcile.
+
+
+
+Baseline finding: IngestService processes each parsed message independently, saves every parsed result without deduplication, and derives category solely from debit/credit direction. This explains why duplicate evidence can inflate transaction counts and why MICRO/TRANSFER are currently always zero.
+
+Parser routing: Parsers registers only HDFC and ICICI SMS parsers. EmailParser exists in the project but is not registered, so supported email messages are currently skipped.
+
+Finding #1 — Email processing is incomplete
+
+The corpus contains email messages, but EmailParser is unimplemented and isn't registered in Parsers. Therefore email transaction evidence is currently lost.

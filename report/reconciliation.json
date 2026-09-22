@@ -1,0 +1,28 @@
+{
+  "transaction_count": 272,
+  "discrepancies": [
+    {
+      "actual": "272",
+      "expected": "257",
+      "field": "transactions"
+    },
+    {
+      "account_last4": "4821",
+      "field": "spend",
+      "expected": "87068.38",
+      "actual": "182488.46"
+    },
+    {
+      "account_last4": "4821",
+      "field": "income",
+      "expected": "101340.83",
+      "actual": "151340.83"
+    },
+    {
+      "account_last4": "9075",
+      "field": "spend",
+      "expected": "39058.11",
+      "actual": "46752.11"
+    }
+  ]
+}
